@@ -1,0 +1,253 @@
+!pip install matplotlib
+import sqlite3
+import datetime
+import ipywidgets as widgets
+import pandas as pd
+import matplotlib.pyplot as plt
+from IPython.display import display, clear_output
+
+# ========================
+# 📦 INICIALIZAR BASE DE DATOS
+# ========================
+def init_db():
+    conn = sqlite3.connect("mini_market.db")
+    c = conn.cursor()
+    
+    # Tabla usuarios
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY,
+            nombre TEXT NOT NULL,
+            contraseña TEXT NOT NULL
+        )
+    ''')
+    c.execute("SELECT * FROM usuarios WHERE nombre='admin'")
+    if not c.fetchone():
+        c.execute("INSERT INTO usuarios (nombre, contraseña) VALUES (?, ?)", ("admin", "1234"))
+    
+    # Tabla inventario
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS inventario (
+            id INTEGER PRIMARY KEY,
+            nombre TEXT NOT NULL,
+            precio REAL NOT NULL,
+            stock INTEGER NOT NULL
+        )
+    ''')
+    productos = [
+        ("Manzana", 0.5, 50),
+        ("Pan", 1.0, 30),
+        ("Leche", 1.2, 20),
+        ("Arroz", 0.8, 40),
+        ("Huevos", 2.0, 25),
+    ]
+    for p in productos:
+        c.execute("SELECT * FROM inventario WHERE nombre=?", (p[0],))
+        if not c.fetchone():
+            c.execute("INSERT INTO inventario (nombre, precio, stock) VALUES (?, ?, ?)", p)
+    
+    # Tabla ventas
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ventas (
+            id INTEGER PRIMARY KEY,
+            producto TEXT,
+            cantidad INTEGER,
+            total REAL,
+            fecha TEXT
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+
+# ========================
+# 👤 LOGIN
+# ========================
+def login(b):
+    usuario = usuario_input.value
+    contraseña = contraseña_input.value
+    conn = sqlite3.connect("mini_market.db")
+    c = conn.cursor()
+    c.execute("SELECT * FROM usuarios WHERE nombre=? AND contraseña=?", (usuario, contraseña))
+    result = c.fetchone()
+    conn.close()
+    
+    output_login.clear_output()
+    if result:
+        clear_output()
+        mostrar_app()
+    else:
+        with output_login:
+            print("❌ Usuario o contraseña incorrectos")
+
+# ========================
+# 🛒 APLICACIÓN PRINCIPAL
+# ========================
+carrito = {}
+
+def mostrar_app():
+    clear_output()
+    display(widgets.HTML("<h2>🛍️ Mini Market</h2>"))
+    actualizar_dropdown()
+    display(producto_dropdown, cantidad_slider, boton_agregar)
+    display(output_carrito)
+    display(boton_registrar_venta, boton_ver_ventas, output_ventas)
+    mostrar_carrito()
+
+# ========================
+# 🔽 Dropdown y Slider
+# ========================
+def get_stock(nombre):
+    if nombre is None:
+        return 0
+    conn = sqlite3.connect("mini_market.db")
+    c = conn.cursor()
+    c.execute("SELECT stock FROM inventario WHERE nombre=?", (nombre,))
+    resultado = c.fetchone()
+    conn.close()
+    if resultado:
+        return resultado[0]
+    return 0
+
+def actualizar_dropdown(*args):
+    conn = sqlite3.connect("mini_market.db")
+    df = pd.read_sql("SELECT nombre FROM inventario WHERE stock > 0", conn)
+    conn.close()
+    opciones = df["nombre"].tolist()
+    producto_dropdown.options = opciones
+    if opciones:
+        producto_dropdown.value = opciones[0]
+        cantidad_slider.max = get_stock(producto_dropdown.value)
+    else:
+        producto_dropdown.value = None
+        cantidad_slider.max = 0
+
+def actualizar_slider(change):
+    cantidad_slider.max = get_stock(change["new"])
+
+# ========================
+# 🛒 Carrito
+# ========================
+def agregar_carrito(b):
+    nombre = producto_dropdown.value
+    cantidad = cantidad_slider.value
+    if cantidad <= 0:
+        output_carrito.clear_output()
+        with output_carrito:
+            print("⚠️ Cantidad inválida")
+        return
+    conn = sqlite3.connect("mini_market.db")
+    c = conn.cursor()
+    c.execute("SELECT precio, stock FROM inventario WHERE nombre=?", (nombre,))
+    resultado = c.fetchone()
+    conn.close()
+    if not resultado:
+        output_carrito.clear_output()
+        with output_carrito:
+            print("⚠️ Producto no encontrado")
+        return
+    precio, stock = resultado
+    if cantidad > stock:
+        output_carrito.clear_output()
+        with output_carrito:
+            print("⚠️ Supera el stock disponible")
+        return
+    if nombre in carrito:
+        carrito[nombre]["cantidad"] += cantidad
+    else:
+        carrito[nombre] = {"precio": precio, "cantidad": cantidad}
+    
+    output_carrito.clear_output()
+    with output_carrito:
+        print(f"✅ {cantidad} x {nombre} agregado(s) al carrito")
+    mostrar_carrito()
+    actualizar_dropdown()
+
+def mostrar_carrito():
+    output_carrito.clear_output()
+    with output_carrito:
+        if carrito:
+            df_carrito = pd.DataFrame([
+                {"Producto": k, "Cantidad": v["cantidad"], "Precio Unitario": v["precio"], "Total": v["cantidad"]*v["precio"]}
+                for k,v in carrito.items()
+            ])
+            display(df_carrito)
+            total = df_carrito["Total"].sum()
+            print(f"💰 Total carrito: ${total:.2f}")
+        else:
+            print("Carrito vacío.")
+
+# ========================
+# 💵 Registrar Venta
+# ========================
+def registrar_venta(b):
+    if not carrito:
+        output_ventas.clear_output()
+        with output_ventas:
+            print("⚠️ Carrito vacío")
+        return
+    fecha = datetime.date.today().isoformat()
+    conn = sqlite3.connect("mini_market.db")
+    c = conn.cursor()
+    for nombre, datos in carrito.items():
+        total = datos["precio"] * datos["cantidad"]
+        c.execute("INSERT INTO ventas (producto, cantidad, total, fecha) VALUES (?, ?, ?, ?)",
+                  (nombre, datos["cantidad"], total, fecha))
+        c.execute("UPDATE inventario SET stock = stock - ? WHERE nombre=?", (datos["cantidad"], nombre))
+    conn.commit()
+    conn.close()
+    carrito.clear()
+    mostrar_carrito()
+    output_ventas.clear_output()
+    with output_ventas:
+        print("✅ Venta registrada con éxito")
+    actualizar_dropdown()
+
+# ========================
+# 📈 Ventas del Día
+# ========================
+def ver_ventas_dia(b):
+    conn = sqlite3.connect("mini_market.db")
+    df = pd.read_sql("SELECT producto, cantidad, total FROM ventas WHERE fecha=?", conn, params=(datetime.date.today().isoformat(),))
+    conn.close()
+    output_ventas.clear_output()
+    with output_ventas:
+        if df.empty:
+            print("🗓️ No hay ventas hoy")
+        else:
+            display(df)
+            total_dia = df["total"].sum()
+            print(f"\n💰 Total del día: ${total_dia:.2f}")
+            df_plot = df.groupby("producto")["cantidad"].sum()
+            df_plot.plot(kind="bar", title="Ventas del Día", ylabel="Cantidad", xlabel="Producto", color="skyblue")
+            plt.show()
+
+# ========================
+# 🧩 Widgets
+# ========================
+usuario_input = widgets.Text(description="Usuario:")
+contraseña_input = widgets.Password(description="Contraseña:")
+boton_login = widgets.Button(description="Ingresar", button_style='success')
+output_login = widgets.Output()
+
+producto_dropdown = widgets.Dropdown(description="Producto:")
+cantidad_slider = widgets.IntSlider(description="Cantidad", min=1, max=10, value=1)
+producto_dropdown.observe(actualizar_slider, names='value')
+boton_agregar = widgets.Button(description="Agregar", button_style='info')
+
+boton_registrar_venta = widgets.Button(description="Registrar Venta", button_style='success')
+boton_ver_ventas = widgets.Button(description="Ver Ventas del Día", button_style='primary')
+output_carrito = widgets.Output()
+output_ventas = widgets.Output()
+
+boton_login.on_click(login)
+boton_agregar.on_click(agregar_carrito)
+boton_registrar_venta.on_click(registrar_venta)
+boton_ver_ventas.on_click(ver_ventas_dia)
+
+# ========================
+# 🚀 Inicio
+# ========================
+init_db()
+display(widgets.HTML("<h2>🔐 Iniciar Sesión - Mini Market</h2>"))
+display(usuario_input, contraseña_input, boton_login, output_login)
