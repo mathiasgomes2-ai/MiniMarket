@@ -4,6 +4,10 @@ Una tienda online realizada con Python es una aplicación web que permite vender
 
 Python ofrece una estructura clara, seguridad y fácil mantenimiento, lo que permite desarrollar una tienda funcional y escalable. Este tipo de proyecto es ideal para aprender desarrollo web, gestión de bases de datos y programación orientada a objetos, además de ser una buena base para negocios pequeños que buscan digitalizar sus ventas.
 
-Objetivo
+# Objetivo
 
 Vender productos o servicios por internet, ampliando el alcance del negocio y ofreciendo una forma cómoda y accesible de compra para los clientes.
+
+# Utilidad
+
+Permite tener una tienda disponible las 24 horas, reducir costos, promocionar la marca y gestionar ventas de forma rápida y sencilla.
